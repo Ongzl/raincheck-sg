@@ -12,11 +12,14 @@ import { userError } from './errors.js';
 
 const ONEMAP = 'https://www.onemap.gov.sg';
 const UA = 'raincheck-sg-prototype (student project)';
+// Runs in Node (server) and in the browser (GitHub Pages build). Browsers have no process.env and set their own User-Agent.
+const env = globalThis.process?.env ?? {};
+const UA_HEADER = globalThis.process?.versions?.node ? { 'User-Agent': UA } : {};
 let token = null; // { value, expiresAt, scheme }
 
 export function routingProvider() {
-  if ((process.env.ONEMAP_EMAIL && process.env.ONEMAP_PASSWORD) || process.env.ONEMAP_TOKEN) return 'onemap';
-  if (process.env.ORS_API_KEY) return 'ors';
+  if ((env.ONEMAP_EMAIL && env.ONEMAP_PASSWORD) || env.ONEMAP_TOKEN) return 'onemap';
+  if (env.ORS_API_KEY) return 'ors';
   return 'osrm';
 }
 
@@ -24,7 +27,7 @@ export function routingProvider() {
 
 export async function searchPlaces(query) {
   const url = `${ONEMAP}/api/common/elastic/search?searchVal=${encodeURIComponent(query)}&returnGeom=Y&getAddrDetails=Y&pageNum=1`;
-  const res = await fetch(url, { headers: { 'User-Agent': UA } });
+  const res = await fetch(url, { headers: { ...UA_HEADER } });
   if (res.status === 429) throw userError('Place search is busy. Wait a few seconds and try again.', 503);
   if (!res.ok) throw new Error(`OneMap search returned ${res.status}`);
   const body = await res.json();
@@ -46,15 +49,15 @@ function titleCase(s = '') {
 // ---------- OneMap public transport ----------
 
 async function oneMapToken() {
-  if (process.env.ONEMAP_TOKEN) {
-    if (!token) token = { value: process.env.ONEMAP_TOKEN, expiresAt: Infinity, scheme: '' };
+  if (env.ONEMAP_TOKEN) {
+    if (!token) token = { value: env.ONEMAP_TOKEN, expiresAt: Infinity, scheme: '' };
     return token;
   }
   if (token && token.expiresAt - Date.now() > 10 * 60 * 1000) return token;
   const res = await fetch(`${ONEMAP}/api/auth/post/getToken`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
-    body: JSON.stringify({ email: process.env.ONEMAP_EMAIL, password: process.env.ONEMAP_PASSWORD }),
+    headers: { 'Content-Type': 'application/json', ...UA_HEADER },
+    body: JSON.stringify({ email: env.ONEMAP_EMAIL, password: env.ONEMAP_PASSWORD }),
   });
   if (!res.ok) throw new Error(`OneMap login failed (${res.status}). Check ONEMAP_EMAIL / ONEMAP_PASSWORD.`);
   const body = await res.json();
@@ -87,14 +90,14 @@ async function oneMapPublicTransport(from, to, departAt) {
     // The docs and community clients disagree on whether a "Bearer " prefix is needed, so try both
     // the first time and remember whichever works.
     for (const scheme of tok.schemeKnown ? [tok.scheme] : ['', 'Bearer ']) {
-      const res = await fetch(url, { headers: { Authorization: scheme + tok.value, 'User-Agent': UA } });
+      const res = await fetch(url, { headers: { Authorization: scheme + tok.value, ...UA_HEADER } });
       if (res.status === 401 || res.status === 403) continue;
       if (!res.ok) throw new Error(`OneMap routing returned ${res.status}`);
       tok.scheme = scheme;
       tok.schemeKnown = true;
       return parseOneMapPlan(await res.json());
     }
-    if (process.env.ONEMAP_TOKEN) break; // a fixed token can't be refreshed
+    if (env.ONEMAP_TOKEN) break; // a fixed token can't be refreshed
     token = null;
   }
   throw new Error('OneMap rejected the token (401). Check your OneMap account.');
@@ -157,8 +160,8 @@ function walkItinerary(points, durationS, distanceM, from, to, departAt) {
 }
 
 async function orsWalk(from, to, departAt) {
-  const url = `https://api.openrouteservice.org/v2/directions/foot-walking?api_key=${process.env.ORS_API_KEY}&start=${from.lon},${from.lat}&end=${to.lon},${to.lat}`;
-  const res = await fetch(url, { headers: { 'User-Agent': UA } });
+  const url = `https://api.openrouteservice.org/v2/directions/foot-walking?api_key=${env.ORS_API_KEY}&start=${from.lon},${from.lat}&end=${to.lon},${to.lat}`;
+  const res = await fetch(url, { headers: { ...UA_HEADER } });
   if (!res.ok) throw new Error(`OpenRouteService returned ${res.status}`);
   const f = (await res.json()).features[0];
   const points = f.geometry.coordinates.map(([lon, lat]) => [lat, lon]);
@@ -167,7 +170,7 @@ async function orsWalk(from, to, departAt) {
 
 async function osrmWalk(from, to, departAt) {
   const url = `https://routing.openstreetmap.de/routed-foot/route/v1/foot/${from.lon},${from.lat};${to.lon},${to.lat}?overview=full&geometries=polyline&steps=false`;
-  const res = await fetch(url, { headers: { 'User-Agent': UA } });
+  const res = await fetch(url, { headers: { ...UA_HEADER } });
   if (!res.ok) throw new Error(`OSRM demo server returned ${res.status}`);
   const r = (await res.json()).routes?.[0];
   if (!r) throw userError('No walking route found for this trip.');
@@ -192,7 +195,7 @@ export async function getItineraries(from, to, departAt) {
       note = 'Bus and MRT options are unavailable right now, so this is a walking-only route.';
     }
   }
-  if (provider === 'ors' || (provider === 'onemap' && process.env.ORS_API_KEY)) {
+  if (provider === 'ors' || (provider === 'onemap' && env.ORS_API_KEY)) {
     return { provider: 'ors', itineraries: await orsWalk(from, to, departAt), note };
   }
   return { provider: 'osrm', itineraries: await osrmWalk(from, to, departAt), note };

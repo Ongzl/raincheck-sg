@@ -3,11 +3,12 @@
 
 const BASE = 'https://api-open.data.gov.sg/v2/real-time/api';
 const CACHE_MS = 5 * 60 * 1000;
+const env = globalThis.process?.env ?? {}; // empty in the browser
 const cache = new Map();
 
 async function getJson(path) {
   const headers = {};
-  if (process.env.DATA_GOV_SG_API_KEY) headers['x-api-key'] = process.env.DATA_GOV_SG_API_KEY;
+  if (env.DATA_GOV_SG_API_KEY) headers['x-api-key'] = env.DATA_GOV_SG_API_KEY;
   for (let attempt = 0; attempt < 3; attempt++) {
     const res = await fetch(BASE + path, { headers });
     if (res.status === 429) {

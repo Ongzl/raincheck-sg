@@ -12,6 +12,8 @@ Rain Check SG is a mobile web app for people in Singapore who walk to and from p
 
 It's a **companion to Google Maps, not a replacement**. When you've decided, one tap opens the trip in Google Maps for navigation.
 
+**Try it:** https://ongzl.github.io/raincheck-sg/ (online demo: walking-only routes. See [Two ways to run it](#two-ways-to-run-it).)
+
 ---
 
 ## Part 1: The problem
@@ -122,6 +124,17 @@ Bus and MRT legs count as sheltered. **Every walking leg counts as exposed**, in
 Google Maps routing was ruled out because it needs a billing account with a card. The app links to Google Maps for navigation, which needs no API.
 
 ---
+
+## Two ways to run it
+
+| | Online demo (GitHub Pages) | Full version (`npm start`) |
+|---|---|---|
+| Where | https://ongzl.github.io/raincheck-sg/ | Your own computer or a Node host |
+| Routes | Walking only (public OSRM demo server) | **Bus + MRT** via OneMap, with walking fallback |
+| "Take the bus instead" | No | Yes |
+| Secrets | None: the browser calls the public APIs directly | OneMap login stays on the server in `.env` |
+
+Same code in both. The page checks for the server's `/api` and, if there isn't one, runs `src/` directly in the browser. Every push to `main` redeploys the demo through `.github/workflows/pages.yml`, which runs the tests and then `npm run build:pages`.
 
 ## Running it
 

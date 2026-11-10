@@ -1,7 +1,7 @@
 {
   "name": "Rain Check SG",
   "short_name": "Rain Check",
-  "start_url": "/",
+  "start_url": "./",
   "display": "standalone",
   "background_color": "#f4f7fa",
   "theme_color": "#0f5c8c",
