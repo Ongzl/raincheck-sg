@@ -2,25 +2,29 @@
 // { label, durationMin, startTime, endTime, walkOnly, legs: [{ mode, label, from, to, startTime, endTime, durationMin, distanceM, points }] }
 // Times are epoch ms. Points are [lat, lon].
 //
-// Provider chain (all free, no card):
-//   1. OneMap public-transport routing (bus + MRT, several itineraries)  needs ONEMAP_EMAIL/ONEMAP_PASSWORD
-//   2. OpenRouteService walking                                          needs ORS_API_KEY
-//   3. Public OSRM demo server walking (FOSSGIS)                         no key, demo use only
+// Provider chain (all free, no card). Each step falls through to the next if it fails:
+//   1. OneMap public-transport routing (bus + MRT)      needs ONEMAP_EMAIL/ONEMAP_PASSWORD or ONEMAP_TOKEN (server only)
+//   2. Transitous public-transport routing (bus + MRT)  no key; community service for open-source, non-commercial apps
+//   3. OpenRouteService walking                         needs ORS_API_KEY
+//   4. Public OSRM demo server walking (FOSSGIS)        no key, demo use only
 
 import { decodePolyline } from './polyline.js';
 import { userError } from './errors.js';
 
 const ONEMAP = 'https://www.onemap.gov.sg';
-const UA = 'raincheck-sg-prototype (student project)';
+const TRANSITOUS = 'https://api.transitous.org/api/v1/plan';
+// Transitous asks API users to identify themselves with an app name, version and contact (User-Agent in Node;
+// browsers send the page as Referer instead, and the page shows contact details).
+const UA = 'raincheck-sg/0.1 (+https://github.com/Ongzl/raincheck-sg)';
 // Runs in Node (server) and in the browser (GitHub Pages build). Browsers have no process.env and set their own User-Agent.
 const env = globalThis.process?.env ?? {};
 const UA_HEADER = globalThis.process?.versions?.node ? { 'User-Agent': UA } : {};
 let token = null; // { value, expiresAt, scheme }
 
+/** The first-choice routing source; getItineraries falls back down the chain if it fails. */
 export function routingProvider() {
   if ((env.ONEMAP_EMAIL && env.ONEMAP_PASSWORD) || env.ONEMAP_TOKEN) return 'onemap';
-  if (env.ORS_API_KEY) return 'ors';
-  return 'osrm';
+  return 'transitous';
 }
 
 // ---------- place search (OneMap search works without a token) ----------
@@ -105,26 +109,30 @@ async function oneMapPublicTransport(from, to, departAt) {
 
 const MODE_NAMES = { WALK: 'Walk', BUS: 'Bus', SUBWAY: 'MRT', RAIL: 'MRT', TRAM: 'LRT' };
 
-/** Leg path; if OneMap leaves out the geometry, fall back to the leg's start and end points. */
+/** Leg path; if the router leaves out the geometry, fall back to the leg's start and end points. */
 function legPoints(leg) {
-  if (leg.legGeometry?.points) return decodePolyline(leg.legGeometry.points);
+  if (leg.legGeometry?.points) return decodePolyline(leg.legGeometry.points, Number(leg.legGeometry.precision) || 5);
   const ends = [leg.from, leg.to].filter((p) => Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lon)));
   return ends.map((p) => [Number(p.lat), Number(p.lon)]);
 }
 
-export function parseOneMapPlan(body) {
-  const itineraries = body?.plan?.itineraries ?? [];
+// Both OneMap and Transitous return OpenTripPlanner-style plans: itineraries made of legs.
+// OneMap gives times as epoch ms; Transitous as ISO strings. Date.parse/Number handle both.
+const toMs = (t) => (typeof t === 'number' || /^\d+$/.test(String(t)) ? Number(t) : Date.parse(t));
+const BIG_MODES = { METRO: 'SUBWAY', RAIL: 'SUBWAY', SUBWAY: 'SUBWAY', LIGHT_RAIL: 'TRAM', TRAM: 'TRAM', COACH: 'BUS', BUS: 'BUS' };
+
+function parsePlanItineraries(itineraries) {
   return itineraries.map((it) => {
     const legs = it.legs.map((leg) => {
-      const mode = leg.mode === 'WALK' ? 'WALK' : leg.mode;
+      const mode = leg.mode === 'WALK' ? 'WALK' : BIG_MODES[leg.mode] ?? leg.mode;
       const route = leg.routeShortName || leg.route || '';
       return {
         mode,
         label: mode === 'WALK' ? 'Walk' : `${MODE_NAMES[mode] ?? mode} ${route}`.trim(),
         from: leg.from?.name ?? '',
         to: leg.to?.name ?? '',
-        startTime: Number(leg.startTime),
-        endTime: Number(leg.endTime),
+        startTime: toMs(leg.startTime),
+        endTime: toMs(leg.endTime),
         durationMin: Number(leg.duration) / 60,
         distanceM: Number(leg.distance) || 0,
         points: legPoints(leg),
@@ -134,12 +142,37 @@ export function parseOneMapPlan(body) {
     return {
       label: rides.length ? rides.join(' → ') : 'Walk all the way',
       durationMin: Number(it.duration) / 60,
-      startTime: Number(it.startTime),
-      endTime: Number(it.endTime),
+      startTime: toMs(it.startTime),
+      endTime: toMs(it.endTime),
       walkOnly: rides.length === 0,
       legs,
     };
   });
+}
+
+export function parseOneMapPlan(body) {
+  return parsePlanItineraries(body?.plan?.itineraries ?? []);
+}
+
+/** Transitous returns the next few departures, often of the same route: keep the earliest of each distinct route. */
+export function parseTransitousPlan(body) {
+  const seen = new Set();
+  return parsePlanItineraries(body?.itineraries ?? []).filter((it) => {
+    if (seen.has(it.label)) return false;
+    seen.add(it.label);
+    return true;
+  });
+}
+
+// ---------- Transitous public transport (keyless, works from a browser) ----------
+
+async function transitousPublicTransport(from, to, departAt) {
+  const url =
+    `${TRANSITOUS}?fromPlace=${from.lat},${from.lon}&toPlace=${to.lat},${to.lon}` +
+    `&time=${encodeURIComponent(new Date(departAt).toISOString())}&numItineraries=5`;
+  const res = await fetch(url, { headers: { ...UA_HEADER } });
+  if (!res.ok) throw new Error(`Transitous returned ${res.status}`);
+  return parseTransitousPlan(await res.json());
 }
 
 // ---------- walking-only fallbacks ----------
@@ -179,24 +212,33 @@ async function osrmWalk(from, to, departAt) {
 
 /** Returns { provider, itineraries, note } */
 export async function getItineraries(from, to, departAt) {
-  const provider = routingProvider();
-  let note = 'Walking-only route: add a free OneMap account to compare bus and MRT options.';
-  if (provider === 'onemap') {
+  // Routers name the trip ends "Origin"/"Destination" or "START"/"END" and stops in capitals: use the user's names.
+  const ENDS = { Origin: from.label, START: from.label, Destination: to.label, END: to.label };
+  const tidy = (itineraries) => {
+    for (const it of itineraries) {
+      for (const l of it.legs) Object.assign(l, { from: ENDS[l.from] ?? titleCase(l.from), to: ENDS[l.to] ?? titleCase(l.to) });
+    }
+    return itineraries;
+  };
+
+  const transit = [];
+  if (routingProvider() === 'onemap') transit.push(['onemap', oneMapPublicTransport]);
+  transit.push(['transitous', transitousPublicTransport]);
+  let found = false;
+  for (const [provider, plan] of transit) {
     try {
-      const itineraries = await oneMapPublicTransport(from, to, departAt);
-      // OneMap names the ends "Origin"/"Destination" and stops in capitals: use the user's place names.
-      const name = (n) => (n === 'Origin' ? from.label : n === 'Destination' ? to.label : titleCase(n)) ?? '';
-      for (const it of itineraries) for (const l of it.legs) Object.assign(l, { from: name(l.from), to: name(l.to) });
-      if (itineraries.length) return { provider, itineraries, note: null };
-      note = 'OneMap found no bus or MRT option for this trip, so this is a walking-only route.';
+      const itineraries = await plan(from, to, departAt);
+      if (itineraries.length) return { provider, itineraries: tidy(itineraries), note: null };
+      found = true; // the router worked but had no bus/MRT option
     } catch (err) {
-      // Don't let a OneMap outage or login problem take the whole app down: fall back to walking.
-      console.error('OneMap routing failed, falling back to walking:', err.message);
-      note = 'Bus and MRT options are unavailable right now, so this is a walking-only route.';
+      // Don't let one router's outage take the whole app down: try the next one, then walking.
+      console.error(`${provider} routing failed:`, err.message);
     }
   }
-  if (provider === 'ors' || (provider === 'onemap' && env.ORS_API_KEY)) {
-    return { provider: 'ors', itineraries: await orsWalk(from, to, departAt), note };
-  }
+
+  const note = found
+    ? 'No bus or MRT option found for this trip, so this is a walking-only route.'
+    : 'Bus and MRT options are unavailable right now, so this is a walking-only route.';
+  if (env.ORS_API_KEY) return { provider: 'ors', itineraries: await orsWalk(from, to, departAt), note };
   return { provider: 'osrm', itineraries: await osrmWalk(from, to, departAt), note };
 }

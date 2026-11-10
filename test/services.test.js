@@ -11,13 +11,44 @@ afterEach(() => {
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
-test('falls back to a walking route when OneMap fails', async () => {
+const transitousPlan = {
+  itineraries: [
+    { duration: 600, startTime: '2026-11-10T08:00:00Z', endTime: '2026-11-10T08:10:00Z', legs: [
+      { mode: 'WALK', duration: 120, startTime: '2026-11-10T08:00:00Z', endTime: '2026-11-10T08:02:00Z', from: { name: 'START', lat: 1.35, lon: 103.84 }, to: { name: 'BISHAN', lat: 1.351, lon: 103.848 } },
+      { mode: 'SUBWAY', routeShortName: 'CC', duration: 480, startTime: '2026-11-10T08:02:00Z', endTime: '2026-11-10T08:10:00Z', from: { name: 'BISHAN', lat: 1.351, lon: 103.848 }, to: { name: 'END', lat: 1.34, lon: 103.85 } },
+    ] },
+  ],
+};
+
+test('uses Transitous for bus/MRT when OneMap fails', async () => {
   process.env.ONEMAP_TOKEN = 'test-token';
   const { getItineraries } = await import('../src/routing.js');
   const calls = [];
   globalThis.fetch = async (url) => {
     calls.push(String(url));
     if (String(url).includes('onemap.gov.sg')) return json({ error: 'down' }, 503);
+    if (String(url).includes('api.transitous.org')) return json(transitousPlan);
+    throw new Error(`unexpected ${url}`);
+  };
+  const r = await getItineraries({ label: 'Home', lat: 1.35, lon: 103.84 }, { label: 'Office', lat: 1.34, lon: 103.85 }, Date.now());
+  assert.equal(r.provider, 'transitous');
+  assert.equal(r.note, null);
+  assert.equal(r.itineraries[0].label, 'MRT CC');
+  // "START"/"END" become the user's place names; stop names are title-cased.
+  assert.equal(r.itineraries[0].legs[0].from, 'Home');
+  assert.equal(r.itineraries[0].legs[0].to, 'Bishan');
+  assert.equal(r.itineraries[0].legs[1].to, 'Office');
+  assert.ok(calls[0].includes('onemap.gov.sg'), 'OneMap is tried first when configured');
+});
+
+test('falls back to a walking route when OneMap and Transitous both fail', async () => {
+  process.env.ONEMAP_TOKEN = 'test-token';
+  const { getItineraries } = await import('../src/routing.js');
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    if (String(url).includes('onemap.gov.sg')) return json({ error: 'down' }, 503);
+    if (String(url).includes('api.transitous.org')) throw new TypeError('Failed to fetch');
     if (String(url).includes('routing.openstreetmap.de')) {
       return json({ code: 'Ok', routes: [{ geometry: '_p~iF~ps|U_ulLnnqC', duration: 600, distance: 800 }] });
     }
