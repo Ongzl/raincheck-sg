@@ -25,6 +25,7 @@ export function routingProvider() {
 export async function searchPlaces(query) {
   const url = `${ONEMAP}/api/common/elastic/search?searchVal=${encodeURIComponent(query)}&returnGeom=Y&getAddrDetails=Y&pageNum=1`;
   const res = await fetch(url, { headers: { 'User-Agent': UA } });
+  if (res.status === 429) throw userError('Place search is busy. Wait a few seconds and try again.', 503);
   if (!res.ok) throw new Error(`OneMap search returned ${res.status}`);
   const body = await res.json();
   return (body.results ?? []).slice(0, 6).map((r) => ({
@@ -180,6 +181,9 @@ export async function getItineraries(from, to, departAt) {
   if (provider === 'onemap') {
     try {
       const itineraries = await oneMapPublicTransport(from, to, departAt);
+      // OneMap names the ends "Origin"/"Destination" and stops in capitals: use the user's place names.
+      const name = (n) => (n === 'Origin' ? from.label : n === 'Destination' ? to.label : titleCase(n)) ?? '';
+      for (const it of itineraries) for (const l of it.legs) Object.assign(l, { from: name(l.from), to: name(l.to) });
       if (itineraries.length) return { provider, itineraries, note: null };
       note = 'OneMap found no bus or MRT option for this trip, so this is a walking-only route.';
     } catch (err) {

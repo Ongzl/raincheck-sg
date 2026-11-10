@@ -116,7 +116,7 @@ function reasonFor(it) {
   const leg = walks.find((w) => w.severity === it.severity);
   const f = leg.forecasts.find((x) => x.severity === it.severity) ?? leg.forecasts[0];
   const where = f.source === '2h' ? `around ${f.place}` : `for the ${f.place}`;
-  const route = leg.from && leg.to ? ` from ${leg.from} to ${leg.to}` : '';
+  const route = leg.from && leg.to && leg.from !== leg.to ? ` from ${leg.from} to ${leg.to}` : leg.from ? ` at ${leg.from}` : '';
   return `${f.text} forecast ${where} (${f.window}) during your ${fmtMin(leg.durationMin)} walk${route}.`;
 }
 
@@ -128,8 +128,10 @@ export function mapsLink(from, to, mode = 'transit') {
 export function buildVerdict({ itineraries, weather, from, to, departAt, now = Date.now(), note = null }) {
   const assessed = itineraries.map((it) => assessItinerary(it, weather));
   if (!assessed.length) throw userError('No route found for this trip.');
-  // Primary = the fastest, because that's what Google Maps would send you on anyway.
-  const primary = assessed.reduce((a, b) => (b.durationMin < a.durationMin ? b : a));
+  // Primary = the one that gets you there first (what Google Maps would send you on anyway).
+  // Compare arrival times, not ride durations: OneMap options can leave at different times.
+  const arrival = (it) => (Number.isFinite(it.endTime) ? it.endTime : it.startTime + it.durationMin * 60000);
+  const primary = assessed.reduce((a, b) => (arrival(b) < arrival(a) ? b : a));
   const level = primary.severity == null ? 'unknown' : LEVELS[primary.severity];
 
   const alternatives = [];
@@ -138,11 +140,11 @@ export function buildVerdict({ itineraries, weather, from, to, departAt, now = D
     const others = assessed.filter((it) => it !== primary && it.severity != null && it.severity <= primary.severity);
     const best = others.sort((a, b) => a.severity - b.severity || a.wetMin - b.wetMin || a.walkMin - b.walkMin)[0];
     if (best && (best.severity < primary.severity || primary.wetMin - best.wetMin >= 2)) {
-      const extra = Math.round(best.durationMin - primary.durationMin);
+      const extra = Math.round((arrival(best) - arrival(primary)) / 60000);
       alternatives.push({
         type: 'route',
         title: `Take ${best.label} instead`,
-        detail: `${fmtMin(best.wetMin)} walking in rain instead of ${fmtMin(primary.wetMin)} · ${extra > 0 ? `${extra} min slower` : 'no slower'}`,
+        detail: `${fmtMin(best.wetMin)} walking in rain instead of ${fmtMin(primary.wetMin)} · ${extra > 0 ? `arrives ${extra} min later` : 'arrives no later'}`,
         itineraryIndex: assessed.indexOf(best),
       });
     }
@@ -215,6 +217,7 @@ export function buildVerdict({ itineraries, weather, from, to, departAt, now = D
     itineraries: assessed.map((it) => ({
       label: it.label,
       durationMin: Math.round(it.durationMin),
+      arriveAt: arrival(it),
       walkMin: Math.round(it.walkMin),
       wetMin: Math.round(it.wetMin),
       level: it.severity == null ? 'unknown' : LEVELS[it.severity],

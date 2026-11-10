@@ -156,7 +156,7 @@ function renderResult(r, title) {
   const itins = r.itineraries.map((it, i) => `
     <details class="itin" ${i === r.primaryIndex ? 'open' : ''}>
       <summary><span class="badge ${it.level}">${LEVEL_WORD[it.level]}</span> <span>${esc(it.label)}</span></summary>
-      <p class="hint">${it.durationMin} min total · ${it.walkMin} min walking${it.wetMin ? ` · ${it.wetMin} min of it in rain` : ''}${i === r.primaryIndex ? ' · fastest' : ''}</p>
+      <p class="hint">Arrives ${fmtTime(it.arriveAt)}${i === r.primaryIndex ? ' (first)' : ''} · ${it.durationMin} min travelling · ${it.walkMin} min walking${it.wetMin ? ` · ${it.wetMin} min of it in rain` : ''}</p>
       <ol class="legs">${it.legs.map((l) => `
         <li class="${l.level}">
           <strong>${esc(l.label)}</strong> · ${l.durationMin} min${l.mode === 'WALK' ? '' : ' (sheltered)'}
