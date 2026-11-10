@@ -23,12 +23,16 @@ async function getJson(path) {
   throw new Error(`data.gov.sg ${path} returned no data (rate limited?)`);
 }
 
-async function cached(key, path) {
+// Caches the in-flight promise, so concurrent requests on a cold or expired cache share one upstream call.
+function cached(key, path) {
   const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_MS) return hit.data;
-  const data = await getJson(path);
-  cache.set(key, { at: Date.now(), data });
-  return data;
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.promise;
+  const promise = getJson(path);
+  cache.set(key, { at: Date.now(), promise });
+  promise.catch(() => {
+    if (cache.get(key)?.promise === promise) cache.delete(key); // don't cache failures
+  });
+  return promise;
 }
 
 /** 2-hour forecast for 47 areas: { validFrom, validTo, updated, areas: [{ name, point, forecast }] } */

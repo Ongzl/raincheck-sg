@@ -3,7 +3,7 @@
 //
 //   npm run log -- predict "Bishan MRT" "Junction 8"     record what the app predicts if you leave now
 //   npm run log -- observe                                after the walk: fetch what the rain gauges measured
-//   npm run log -- observe --felt heavy                   ...and record what you actually felt (dry|light|heavy)
+//   npm run log -- observe --felt heavy [--id 3]          ...and record what you felt on the latest (or given) trip
 //   npm run log -- report                                 match rate vs the 70% target
 //
 // Entries are stored in data/accuracy-log.json (git-ignored: it's your personal travel log).
@@ -48,11 +48,25 @@ async function predict(fromQ, toQ) {
   console.log(`#${log.length} ${from.label} -> ${to.label}: predicted ${r.level} (${r.confidence})\n  ${r.reason}\nAfter your walk, run: npm run log -- observe --felt dry|light|heavy`);
 }
 
-async function observe(felt) {
+async function observe(felt, id) {
   const log = load();
+  // --felt describes one specific trip: the one given by --id, or else the most recently logged trip.
+  const feltTarget = felt ? (id ? log.find((e) => e.id === id) : log.at(-1)) : null;
+  if (felt && !feltTarget) throw new Error(`No logged trip #${id}`);
+  if (feltTarget) {
+    feltTarget.felt = felt;
+    console.log(`#${feltTarget.id} ${feltTarget.from} -> ${feltTarget.to}: you felt ${felt}`);
+  }
   const pending = log.filter((e) => !e.observed && e.walks.every((w) => w.endTime < Date.now()));
-  if (!pending.length) return console.log('Nothing to observe yet (walks still in progress, or all done).');
+  if (!pending.length) {
+    save(log);
+    return console.log('No gauge readings to fetch (walks still in progress, or all done).');
+  }
   for (const e of pending) {
+    if (!e.walks.length) {
+      e.observed = 'no walking'; // nothing exposed to check; excluded from the report
+      continue;
+    }
     let max = null;
     for (const w of e.walks) {
       for (let t = w.startTime; t <= w.endTime + 299999; t += 300000) {
@@ -68,7 +82,6 @@ async function observe(felt) {
     const lvl = observedLevel(max);
     e.observed = lvl == null ? 'no gauge nearby' : LEVELS[lvl];
     e.observedMaxMm = max;
-    if (felt && e === pending.at(-1)) e.felt = felt;
     console.log(`#${e.id} predicted ${e.predicted}, gauges measured ${e.observed} (max ${max ?? '-'} mm / 5 min)${e.felt ? `, you felt ${e.felt}` : ''}`);
   }
   save(log);
@@ -91,10 +104,12 @@ const [cmd, ...rest] = process.argv.slice(2);
 const feltIdx = rest.indexOf('--felt');
 const felt = feltIdx >= 0 ? rest[feltIdx + 1] : null;
 if (felt && !LEVELS.includes(felt === 'dry' ? 'fine' : felt)) throw new Error('--felt must be dry, light or heavy');
+const idIdx = rest.indexOf('--id');
+const id = idIdx >= 0 ? Number(rest[idIdx + 1]) : null;
 
 if (cmd === 'predict' && rest.length >= 2) await predict(rest[0], rest[1]);
-else if (cmd === 'observe') await observe(felt === 'dry' ? 'fine' : felt);
+else if (cmd === 'observe') await observe(felt === 'dry' ? 'fine' : felt, id);
 else if (cmd === 'report') report();
 else {
-  console.log('Usage:\n  npm run log -- predict "<from>" "<to>"\n  npm run log -- observe [--felt dry|light|heavy]\n  npm run log -- report');
+  console.log('Usage:\n  npm run log -- predict "<from>" "<to>"\n  npm run log -- observe [--felt dry|light|heavy] [--id N]\n  npm run log -- report');
 }
