@@ -12,7 +12,7 @@ Rain Check SG is a mobile web app for people in Singapore who walk to and from p
 
 It's a **companion to Google Maps, not a replacement**. When you've decided, one tap opens the trip in Google Maps for navigation.
 
-**Try it:** https://ongzl.github.io/raincheck-sg/ (online demo: walking-only routes. See [Two ways to run it](#two-ways-to-run-it).)
+**Try it:** https://ongzl.github.io/raincheck-sg/ (online demo with bus and MRT routes. See [Two ways to run it](#two-ways-to-run-it).)
 
 ---
 
@@ -89,7 +89,7 @@ The pass marks were set *before* collecting evidence, so the results can't be re
  trip (from, to, departure time)
         │
         ▼
- OneMap public-transport routing ──► up to 3 itineraries, each split into legs:
+ OneMap or Transitous      ──► up to 3 itineraries, each split into legs:
         │                            walk → bus 166 → walk → MRT NS → walk
         ▼
  for each WALK leg: sample a point every ~150 m and work out what time you'll be there
@@ -119,7 +119,8 @@ Bus and MRT legs count as sheltered. **Every walking leg counts as exposed**, in
 | [data.gov.sg 24-hour forecast](https://data.gov.sg/collections/weather-forecast/view) (NEA) | Trips more than 2 h away, "go later" advice | 5 regions × ~3 time blocks |
 | [data.gov.sg realtime rainfall](https://data.gov.sg) (NEA) | "Raining now at the gauge near you"; accuracy log | 88 stations, 5-minute totals |
 | [OneMap](https://www.onemap.gov.sg/apidocs/) (SLA) | Place search, bus/MRT routing with walking legs | Leg-by-leg itineraries |
-| [OpenRouteService](https://openrouteservice.org) / [FOSSGIS OSRM](https://routing.openstreetmap.de) | Walking-only fallback if OneMap isn't configured | OpenStreetMap |
+| [Transitous](https://transitous.org) ([sources](https://transitous.org/sources/)) | Bus/MRT routing for the online demo, and on the server when OneMap isn't configured or fails | Community MOTIS router; free for open-source, non-commercial apps, no key |
+| [OpenRouteService](https://openrouteservice.org) / [FOSSGIS OSRM](https://routing.openstreetmap.de) | Walking-only fallback if no bus/MRT router answers | OpenStreetMap |
 
 Google Maps routing was ruled out because it needs a billing account with a card. The app links to Google Maps for navigation, which needs no API.
 
@@ -130,8 +131,8 @@ Google Maps routing was ruled out because it needs a billing account with a card
 | | Online demo (GitHub Pages) | Full version (`npm start`) |
 |---|---|---|
 | Where | https://ongzl.github.io/raincheck-sg/ | Your own computer or a Node host |
-| Routes | Walking only (public OSRM demo server) | **Bus + MRT** via OneMap, with walking fallback |
-| "Take the bus instead" | No | Yes |
+| Routes | **Bus + MRT** via Transitous, with walking fallback | **Bus + MRT** via OneMap, then Transitous, then walking |
+| "Take the bus instead" | Yes | Yes |
 | Secrets | None: the browser calls the public APIs directly | OneMap login stays on the server in `.env` |
 
 Same code in both. The page checks for the server's `/api` and, if there isn't one, runs `src/` directly in the browser. Every push to `main` redeploys the demo through `.github/workflows/pages.yml`, which runs the tests and then `npm run build:pages`.
@@ -146,7 +147,7 @@ cd raincheck-sg
 npm start          # http://localhost:3000
 ```
 
-It works straight away using **walking-only routes**. For bus/MRT itineraries, which make the "take the bus instead" suggestion possible, add a free OneMap account:
+It works straight away, using **Transitous** for bus/MRT routes. To use OneMap (Singapore's official router) first instead, add a free OneMap account:
 
 ```bash
 cp .env.example .env
@@ -168,7 +169,7 @@ npm run log -- report                            # match rate vs the 70% target
 ```
 server.js            zero-dependency HTTP server: static files + /api/search + /api/check
 src/weather.js       data.gov.sg fetch + 5-minute cache (keyless limit is 6 requests / 10 s)
-src/routing.js       OneMap PT → OpenRouteService → OSRM fallback chain, normalised itineraries
+src/routing.js       OneMap PT → Transitous PT → OpenRouteService → OSRM fallback chain, normalised itineraries
 src/verdict.js       pure decision logic: forecast along legs, verdict, alternatives
 src/geo.js           distances, nearest point, path sampling
 src/polyline.js      encoded-polyline decoder
@@ -187,7 +188,7 @@ test/                node:test unit tests
 | Weather | Rain only | Clearest pain; heat stress (WBGT) is a stretch goal, mainly for outdoor planners |
 | When it's used | Before leaving | All three decisions (umbrella, transport, plans) happen before you step out; no push or background location needed |
 | Output | Verdict + reason + alternatives | A raw forecast is what people already have and ignore |
-| Routing | OneMap (bus/MRT legs) | The only free, no-card option that understands Singapore buses and MRT |
+| Routing | OneMap first (bus/MRT legs), Transitous as the keyless alternative | OneMap is Singapore's official router but needs a login, so it only runs on the server; Transitous needs no key, so the online demo can use it from the browser |
 | Relationship to Google Maps | Companion, links out | Don't fight a habit people won't change |
 | Platform | Mobile web app | Fastest to build alone, shareable by link |
 | Covered walkways | Not subtracted (yet) | Real geospatial work; treating all walking as exposed is the cautious default |
@@ -196,7 +197,8 @@ test/                node:test unit tests
 
 - **The 2-hour forecast is one block for each of 47 area *points*.** Each spot on a walk takes the forecast of the nearest area label. It can't say "rain starts at 4:40", which is why the app gives no exact "leave by" times.
 - **Beyond 2 hours, only 5 regions × ~3 blocks exist**, and they're often identical across regions. Those checks are labelled "rough outlook".
-- **OneMap bus/MRT parsing is tested against a fixture**, built from OneMap's documented OpenTripPlanner-style response, not against a live call (no OneMap account was used during development). Walking-only routing, search, and all weather data were tested live.
+- **Transitous is a volunteer-run service**, offered on a best-effort basis, for open-source, non-commercial apps that stay light on resources (roughly under 720 route requests a day). If it's down, the app falls back to walking-only routes. Its Singapore timetables come from a community GTFS feed, so they may differ slightly from LTA's.
+- **Free weather API rate limits:** without a key, data.gov.sg allows 6 requests per 10 s per network. On busy networks a check can take 10–15 s while it waits.
 - **Ride-hail is suggested, not priced**, and there's no ride-hail API.
 - **Not an official forecast.** It's a student prototype built on NEA data.
 

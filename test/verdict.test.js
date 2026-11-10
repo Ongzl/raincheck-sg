@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { decodePolyline } from '../src/polyline.js';
 import { severityOf, forecastAt, buildVerdict, observedLevel, regionOf } from '../src/verdict.js';
-import { parseOneMapPlan, sgtDateTime } from '../src/routing.js';
+import { parseOneMapPlan, parseTransitousPlan, sgtDateTime } from '../src/routing.js';
 import { samplePath } from '../src/geo.js';
 
 // --- helpers to build fixtures ---
@@ -211,6 +211,51 @@ test('legs without geometry fall back to their start and end points', () => {
   assert.equal(its[0].legs[0].points.length, 2);
   const v = buildVerdict({ itineraries: its, weather: weather(), from, to, departAt: T0, now: T0 });
   assert.equal(v.level, 'heavy');
+});
+
+// Arithmetic encoder (no bitwise ops), so it can produce precision-7 polylines for Singapore longitudes.
+function encodeP(points, precision) {
+  const f = 10 ** precision;
+  const enc = (v) => {
+    let n = v < 0 ? -2 * v - 1 : 2 * v;
+    let s = '';
+    while (n >= 32) { s += String.fromCharCode(32 + (n % 32) + 63); n = Math.floor(n / 32); }
+    return s + String.fromCharCode(n + 63);
+  };
+  let pLat = 0;
+  let pLon = 0;
+  let out = '';
+  for (const [lat, lon] of points) {
+    const a = Math.round(lat * f);
+    const b = Math.round(lon * f);
+    out += enc(a - pLat) + enc(b - pLon);
+    pLat = a;
+    pLon = b;
+  }
+  return out;
+}
+
+test('decodes precision-7 polylines without 32-bit overflow (Transitous)', () => {
+  const pts = [[1.3510808, 103.8500768], [1.293301, 103.78442]];
+  const decoded = decodePolyline(encodeP(pts, 7), 7);
+  decoded.forEach(([lat, lon], i) => {
+    assert.ok(Math.abs(lat - pts[i][0]) < 1e-7);
+    assert.ok(Math.abs(lon - pts[i][1]) < 1e-7);
+  });
+});
+
+test('parses Transitous plans: ISO times, precision 7, one entry per distinct route', () => {
+  const geom = { points: encodeP([BISHAN, [1.345, 103.851]], 7), precision: 7 };
+  const it = (start) => ({
+    duration: 600,
+    startTime: start,
+    endTime: new Date(Date.parse(start) + 600000).toISOString(),
+    legs: [{ mode: 'WALK', duration: 600, startTime: start, endTime: new Date(Date.parse(start) + 600000).toISOString(), from: { name: 'START' }, to: { name: 'END' }, legGeometry: geom }],
+  });
+  const its = parseTransitousPlan({ itineraries: [it('2026-11-10T08:00:00Z'), it('2026-11-10T08:06:00Z')] });
+  assert.equal(its.length, 1, 'later departures of the same route are dropped');
+  assert.equal(its[0].startTime, Date.parse('2026-11-10T08:00:00Z'));
+  assert.ok(Math.abs(its[0].legs[0].points[0][1] - BISHAN[1]) < 1e-6);
 });
 
 test('OneMap date/time are Singapore local', () => {
