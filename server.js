@@ -7,7 +7,9 @@ import { existsSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-if (existsSync('.env')) process.loadEnvFile('.env');
+// Load .env from next to this file, so it works whatever folder the server is started from.
+const ENV_FILE = fileURLToPath(new URL('.env', import.meta.url));
+if (existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
 
 const { runCheck } = await import('./src/check.js');
 const { searchPlaces, routingProvider } = await import('./src/routing.js');

@@ -8,18 +8,21 @@
 //
 // Entries are stored in data/accuracy-log.json (git-ignored: it's your personal travel log).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-if (existsSync('.env')) process.loadEnvFile('.env');
+const ENV_FILE = fileURLToPath(new URL('../.env', import.meta.url));
+if (existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
 const { runCheck } = await import('../src/check.js');
 const { searchPlaces } = await import('../src/routing.js');
 const { getRainfall } = await import('../src/weather.js');
 const { samplePath, nearest } = await import('../src/geo.js');
 const { LEVELS, observedLevel } = await import('../src/verdict.js');
 
-const FILE = 'data/accuracy-log.json';
+const DATA_DIR = fileURLToPath(new URL('../data/', import.meta.url));
+const FILE = DATA_DIR + 'accuracy-log.json';
 const TARGET = 0.7;
 const load = () => (existsSync(FILE) ? JSON.parse(readFileSync(FILE, 'utf8')) : []);
-const save = (log) => { mkdirSync('data', { recursive: true }); writeFileSync(FILE, JSON.stringify(log, null, 2)); };
+const save = (log) => { mkdirSync(DATA_DIR, { recursive: true }); writeFileSync(FILE, JSON.stringify(log, null, 2)); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function sgtIso(ms) {
