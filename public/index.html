@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Rain Check SG</title>
+  <meta name="description" content="Before you leave: will rain hit the walking parts of your trip?">
+  <meta name="theme-color" content="#0f5c8c">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <h1><img src="icon.svg" alt="" width="28" height="28"> Rain Check SG</h1>
+    <p class="tag">Will rain hit the walking parts of your trip?</p>
+  </header>
+
+  <main>
+    <section class="card" id="saved-section" hidden>
+      <h2>Your trips</h2>
+      <ul id="saved" class="saved"></ul>
+    </section>
+
+    <section class="card">
+      <h2 id="form-title">Check a trip</h2>
+      <form id="trip-form" autocomplete="off">
+        <div class="field place" data-role="from">
+          <label for="from">From</label>
+          <div class="row">
+            <input id="from" type="text" placeholder="e.g. Bishan MRT, 579842" required>
+            <button type="button" id="locate" class="icon-btn" title="Use my location" aria-label="Use my location">◎</button>
+          </div>
+          <ul class="suggestions" role="listbox"></ul>
+        </div>
+        <div class="swap-row"><button type="button" id="swap" class="link-btn" aria-label="Swap start and destination">⇅ swap</button></div>
+        <div class="field place" data-role="to">
+          <label for="to">To</label>
+          <input id="to" type="text" placeholder="e.g. NUS, Raffles Place" required>
+          <ul class="suggestions" role="listbox"></ul>
+        </div>
+        <fieldset class="field when">
+          <legend>Leaving</legend>
+          <label class="pill"><input type="radio" name="when" value="now" checked> Now</label>
+          <label class="pill"><input type="radio" name="when" value="later"> Later</label>
+          <input id="time" type="time" hidden>
+          <span id="day-hint" class="hint"></span>
+        </fieldset>
+        <button type="submit" class="primary" id="check-btn">Check the rain</button>
+      </form>
+    </section>
+
+    <section id="result" aria-live="polite"></section>
+  </main>
+
+  <footer>
+    Weather: NEA via <a href="https://data.gov.sg" target="_blank" rel="noopener">data.gov.sg</a> ·
+    Routes &amp; search: <a href="https://www.onemap.gov.sg" target="_blank" rel="noopener">OneMap</a> © Singapore Land Authority<span id="routing-credit"></span>.
+    A student prototype, not an official forecast.
+  </footer>
+
+  <template id="save-dialog">
+    <form class="save-form">
+      <label>Name this trip <input name="name" required maxlength="40" placeholder="e.g. Home → Campus"></label>
+      <label>Usual time <input name="time" type="time" required></label>
+      <div class="row"><button type="submit" class="primary small">Save</button><button type="button" class="link-btn cancel">Cancel</button></div>
+    </form>
+  </template>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "raincheck-sg",
+  "version": "0.1.0",
+  "description": "Before you leave: will rain hit the walking parts of your trip in Singapore, and what should you do about it?",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test",
+    "log": "node scripts/accuracy-log.js"
+  },
+  "license": "MIT"
+}
