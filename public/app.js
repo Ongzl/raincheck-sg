@@ -205,7 +205,7 @@ function renderResult(r, title) {
       <p class="hint">Arrives ${fmtTime(it.arriveAt)}${i === r.primaryIndex ? ' (first)' : ''} · ${it.durationMin} min travelling · ${it.walkMin} min walking${it.wetMin ? ` · ${it.wetMin} min of it in rain` : ''}</p>
       <ol class="legs">${it.legs.map((l) => `
         <li class="${l.level}">
-          <strong>${esc(l.label)}</strong> · ${l.durationMin} min${l.mode === 'WALK' ? '' : ' (sheltered)'}
+          <strong>${esc(l.label)}</strong> · ${l.durationMin} min${l.level === 'sheltered' ? ' (sheltered)' : ''}
           ${l.from || l.to ? `<small>${esc(l.from)}${l.to ? ` → ${esc(l.to)}` : ''} · ${fmtTime(l.startTime)}</small>` : ''}
           ${l.mode === 'WALK' && !['trivial'].includes(l.level) ? l.forecasts.map((f) => `<small>${esc(f.place)}: ${esc(f.text ?? 'no forecast')}${f.source === '24h' ? ' (24-h outlook)' : ''}</small>`).join('') : ''}
         </li>`).join('')}

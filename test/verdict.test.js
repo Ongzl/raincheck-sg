@@ -268,3 +268,34 @@ test('rain gauge thresholds', () => {
   assert.equal(observedLevel(1.4), 2);
   assert.equal(observedLevel(null), null);
 });
+
+test('changing lines inside a station is sheltered; a walk to a different stop is not', () => {
+  // MRT -> walk Expo -> Expo (same station) -> MRT -> walk Kent Ridge -> Kent Ridge Stn Exit A (different stop) -> bus
+  const leg = (mode, a, b, from, to, extra = {}) => ({
+    mode, startTime: T0 + a * MIN, endTime: T0 + b * MIN, duration: (b - a) * 60, distance: 200,
+    from: { name: from }, to: { name: to }, legGeometry: { points: encode([BISHAN, [1.351, 103.849]]) }, ...extra,
+  });
+  const plan = { plan: { itineraries: [{ duration: 30 * 60, startTime: T0, endTime: T0 + 30 * MIN, legs: [
+    leg('SUBWAY', 0, 5, 'Tampines East', 'EXPO', { route: 'DT' }),
+    leg('WALK', 5, 8, 'EXPO', 'Expo MRT Station (CG1)'),
+    leg('SUBWAY', 8, 15, 'EXPO', 'KENT RIDGE', { route: 'CG' }),
+    leg('WALK', 15, 18, 'KENT RIDGE', 'Kent Ridge Stn Exit A/NUH'),
+    leg('BUS', 18, 30, 'Kent Ridge Stn Exit A/NUH', 'Ctrl Lib', { route: '95' }),
+  ] }] } };
+  const v = buildVerdict({ itineraries: parseOneMapPlan(plan), weather: weather(), from, to, departAt: T0, now: T0 });
+  const legs = v.itineraries[0].legs;
+  assert.equal(legs[1].level, 'sheltered');
+  assert.match(legs[1].label, /inside the station/);
+  assert.equal(legs[3].level, 'heavy', 'walk to a differently named stop stays exposed');
+  assert.equal(v.itineraries[0].walkMin, 3, 'only the exposed walk counts');
+  assert.equal(v.itineraries[0].wetMin, 3);
+});
+
+test('first and last walks are never treated as in-station transfers', () => {
+  const plan = { plan: { itineraries: [{ duration: 10 * 60, startTime: T0, endTime: T0 + 10 * MIN, legs: [
+    { mode: 'WALK', startTime: T0, endTime: T0 + 3 * MIN, duration: 180, from: { name: 'Bishan' }, to: { name: 'BISHAN' }, legGeometry: { points: encode([BISHAN, [1.351, 103.849]]) } },
+    { mode: 'SUBWAY', route: 'NS', startTime: T0 + 3 * MIN, endTime: T0 + 10 * MIN, duration: 420, from: { name: 'BISHAN' }, to: { name: 'TOA PAYOH' }, legGeometry: { points: encode([BISHAN, TOA_PAYOH]) } },
+  ] }] } };
+  const v = buildVerdict({ itineraries: parseOneMapPlan(plan), weather: weather(), from, to, departAt: T0, now: T0 });
+  assert.equal(v.itineraries[0].legs[0].level, 'heavy');
+});

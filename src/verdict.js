@@ -92,9 +92,35 @@ export function assessLeg(leg, weather) {
   };
 }
 
+/** "Expo MRT Station (CG1)", "EXPO" and "Expo Stn" all become "expo". */
+function stationKey(name = '') {
+  return name
+    .toLowerCase()
+    .replace(/\(.*?\)/g, ' ')
+    .replace(/\b(mrt|lrt|station|stn|interchange|int)\b/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/**
+ * A walk between two rides that starts and ends at the same station is a transfer inside the
+ * station (e.g. changing lines at Expo): it's indoors, so it can't get you wet.
+ * A walk to a differently named stop (e.g. "Kent Ridge" -> "Kent Ridge Stn Exit A") stays exposed.
+ */
+export function isInStationTransfer(legs, i) {
+  const leg = legs[i];
+  if (leg.mode !== 'WALK' || i === 0 || i === legs.length - 1) return false;
+  if (legs[i - 1].mode === 'WALK' || legs[i + 1].mode === 'WALK') return false;
+  const from = stationKey(leg.from);
+  return from !== '' && from === stationKey(leg.to);
+}
+
 export function assessItinerary(itinerary, weather) {
-  const legs = itinerary.legs.map((leg) => (leg.mode === 'WALK' ? assessLeg(leg, weather) : { ...leg, points: undefined, sheltered: true }));
-  const walks = legs.filter((l) => l.mode === 'WALK' && !l.trivial);
+  const legs = itinerary.legs.map((leg, i, all) => {
+    if (isInStationTransfer(all, i)) return { ...leg, points: undefined, label: 'Change lines (inside the station)', sheltered: true, transfer: true };
+    return leg.mode === 'WALK' ? assessLeg(leg, weather) : { ...leg, points: undefined, sheltered: true };
+  });
+  const walks = legs.filter((l) => l.mode === 'WALK' && !l.trivial && !l.sheltered);
   let severity = walks.length ? null : 0;
   let confidence = 'high';
   for (const w of walks) {
@@ -110,7 +136,7 @@ const fmtMin = (m) => `${Math.max(1, Math.round(m))} min`;
 
 function reasonFor(it) {
   if (it.severity == null) return 'No forecast covers this trip yet. Forecasts only reach about 24 hours ahead.';
-  const walks = it.legs.filter((l) => l.mode === 'WALK' && !l.trivial);
+  const walks = it.legs.filter((l) => l.mode === 'WALK' && !l.trivial && !l.sheltered);
   if (!walks.length) return 'There’s no real walking on this route, so rain won’t reach you.';
   if (it.severity === 0) return `No rain forecast for your ${fmtMin(it.walkMin)} of walking.`;
   const leg = walks.find((w) => w.severity === it.severity);
@@ -228,7 +254,7 @@ export function buildVerdict({ itineraries, weather, from, to, departAt, now = D
         to: l.to,
         startTime: l.startTime,
         durationMin: Math.round(l.durationMin),
-        level: l.mode !== 'WALK' ? 'sheltered' : l.trivial ? 'trivial' : l.severity == null ? 'unknown' : LEVELS[l.severity],
+        level: l.sheltered ? 'sheltered' : l.trivial ? 'trivial' : l.severity == null ? 'unknown' : LEVELS[l.severity],
         forecasts: l.forecasts ?? [],
       })),
     })),
