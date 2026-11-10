@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "log": "node scripts/accuracy-log.js"
+    "log": "node scripts/accuracy-log.js",
+    "build:pages": "node scripts/build-pages.js"
   },
   "license": "MIT"
 }

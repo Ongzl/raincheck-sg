@@ -3,6 +3,51 @@ const $ = (sel, el = document) => el.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 const state = { from: null, to: null, lastResult: null };
+
+// ---------- data access: two ways to run ----------
+// 1. With server.js: the server holds the OneMap login, so bus/MRT routes work.
+// 2. As a static site (GitHub Pages): the browser calls the public APIs directly. There's no secret
+//    to protect and no OneMap login, so routes are walking-only.
+async function detectServer() {
+  try {
+    const r = await fetch('api/status');
+    return r.ok && (r.headers.get('content-type') ?? '').includes('json');
+  } catch {
+    return false;
+  }
+}
+
+function serverApi() {
+  return {
+    status: () => fetch('api/status').then((r) => r.json()),
+    search: (q) => fetch(`api/search?q=${encodeURIComponent(q)}`).then((r) => r.json()),
+    async check(trip) {
+      const res = await fetch('api/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(trip) });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || 'Something went wrong');
+      return body;
+    },
+  };
+}
+
+async function staticApi() {
+  const [{ runCheck }, { searchPlaces }] = await Promise.all([import('./src/check.js'), import('./src/routing.js')]);
+  return {
+    status: async () => ({ routing: 'osrm', static: true }),
+    search: (q) => (q.trim().length < 2 ? [] : searchPlaces(q.trim())),
+    async check(trip) {
+      try {
+        const { _itineraries, ...result } = await runCheck(trip);
+        if (result.provider !== 'onemap') result.note = 'This online demo plans walking-only routes, so it can’t compare bus and MRT options yet.';
+        return result;
+      } catch (err) {
+        throw new Error(err.expose ? err.message : 'Couldn’t reach the weather or routing service. Try again in a minute.');
+      }
+    },
+  };
+}
+
+const api = (await detectServer()) ? serverApi() : await staticApi();
 const STORE_KEY = 'raincheck.trips.v1';
 
 // ---------- storage (per-device convenience only) ----------
@@ -57,7 +102,7 @@ function setupPlace(role) {
     if (q.length < 2) { results = []; return render(); }
     timer = setTimeout(async () => {
       try {
-        const found = await (await fetch(`/api/search?q=${encodeURIComponent(q)}`)).json();
+        const found = await api.search(q);
         if (seq !== latest) return; // a newer query is in flight or done
         results = found;
         active = -1;
@@ -124,9 +169,7 @@ async function check(from, to, departAt, title) {
   btn.disabled = true;
   out.innerHTML = '<p class="loading">Checking the forecast along your route…</p>';
   try {
-    const res = await fetch('/api/check', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from, to, departAt }) });
-    const body = await res.json();
-    if (!res.ok) throw new Error(body.error || 'Something went wrong');
+    const body = await api.check({ from, to, departAt });
     state.lastResult = body;
     renderResult(body, title);
     out.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -236,7 +279,7 @@ $('#saved').addEventListener('click', (e) => {
 
 renderSaved();
 updateWhen();
-fetch('/api/status').then((r) => r.json()).then((s) => {
+api.status().then((s) => {
   if (s.routing === 'osrm') $('#routing-credit').innerHTML = ' · Walking routes: <a href="https://routing.openstreetmap.de" target="_blank" rel="noopener">FOSSGIS OSRM</a>, © OpenStreetMap contributors';
   if (s.routing === 'ors') $('#routing-credit').innerHTML = ' · Walking routes: <a href="https://openrouteservice.org" target="_blank" rel="noopener">openrouteservice</a>, © OpenStreetMap contributors';
 }).catch(() => {});
