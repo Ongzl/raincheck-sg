@@ -168,6 +168,11 @@ async function check(from, to, departAt, title) {
   const btn = $('#check-btn');
   btn.disabled = true;
   out.innerHTML = '<p class="loading">Checking the forecast along your route…</p>';
+  // The free weather API rate-limits busy networks; the check retries for up to ~12 s. Say so.
+  const slow = setTimeout(() => {
+    const p = $('.loading', out);
+    if (p) p.textContent = 'The weather service is busy, so this can take up to 15 seconds. Still trying…';
+  }, 3000);
   try {
     const body = await api.check({ from, to, departAt });
     state.lastResult = body;
@@ -176,6 +181,7 @@ async function check(from, to, departAt, title) {
   } catch (err) {
     out.innerHTML = `<div class="card"><p class="error">${esc(err.message)}</p></div>`;
   } finally {
+    clearTimeout(slow);
     btn.disabled = false;
   }
 }

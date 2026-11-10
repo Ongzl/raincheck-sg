@@ -2,6 +2,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
+process.env.RAINCHECK_RETRY_MS = '1'; // keep retry back-off fast in tests
 const realFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = realFetch;
@@ -50,4 +51,40 @@ test('concurrent weather requests share one upstream call', async () => {
   assert.equal(a.areas[0].forecast, 'Showers');
   assert.deepEqual(a, b);
   assert.deepEqual(b, c);
+});
+
+const forecast24 = () => json({
+  code: 0,
+  data: { records: [{ updatedTimestamp: 'x', general: { forecast: { text: 'Showers' } }, periods: [
+    { timePeriod: { start: '2026-11-10T12:00:00+08:00', end: '2026-11-10T18:00:00+08:00', text: 'Midday to 6 pm' }, regions: { north: { text: 'Showers' }, south: { text: 'Showers' }, east: { text: 'Showers' }, west: { text: 'Showers' }, central: { text: 'Showers' } } },
+  ] }] },
+});
+
+test('retries when a rate-limited reply is blocked by the browser (network error)', async () => {
+  const { getTwentyFourHour } = await import('../src/weather.js');
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    if (calls <= 2) throw new TypeError('Failed to fetch'); // what a 429 without CORS headers looks like
+    return forecast24();
+  };
+  const f = await getTwentyFourHour();
+  assert.equal(calls, 3);
+  assert.equal(f.periods[0].regions.central, 'Showers');
+});
+
+test('gives a clear, user-facing message when the weather service stays busy', async () => {
+  const { getRainfall } = await import('../src/weather.js');
+  globalThis.fetch = async () => new Response('', { status: 429 });
+  await assert.rejects(getRainfall('2026-11-10T09:00:00'), (err) => err.expose === true && /busy/.test(err.message));
+});
+
+test('a missing optional source (rain gauges) does not fail the whole check', async () => {
+  const { getAllWeather } = await import('../src/weather.js');
+  // 2-hour and 24-hour forecasts are cached by the tests above; only the rain gauges are fetched here.
+  globalThis.fetch = async () => new Response('', { status: 429 });
+  const w = await getAllWeather();
+  assert.ok(w.twoHour);
+  assert.ok(w.twentyFour);
+  assert.equal(w.rainfall, null);
 });
