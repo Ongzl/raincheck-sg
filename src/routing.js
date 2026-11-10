@@ -8,6 +8,7 @@
 //   3. Public OSRM demo server walking (FOSSGIS)                         no key, demo use only
 
 import { decodePolyline } from './polyline.js';
+import { userError } from './errors.js';
 
 const ONEMAP = 'https://www.onemap.gov.sg';
 const UA = 'raincheck-sg-prototype (student project)';
@@ -44,7 +45,10 @@ function titleCase(s = '') {
 // ---------- OneMap public transport ----------
 
 async function oneMapToken() {
-  if (process.env.ONEMAP_TOKEN) return { value: process.env.ONEMAP_TOKEN, scheme: token?.scheme ?? '' };
+  if (process.env.ONEMAP_TOKEN) {
+    if (!token) token = { value: process.env.ONEMAP_TOKEN, expiresAt: Infinity, scheme: '' };
+    return token;
+  }
   if (token && token.expiresAt - Date.now() > 10 * 60 * 1000) return token;
   const res = await fetch(`${ONEMAP}/api/auth/post/getToken`, {
     method: 'POST',
@@ -56,7 +60,7 @@ async function oneMapToken() {
   token = {
     value: body.access_token,
     expiresAt: Number(body.expiry_timestamp) * 1000 || Date.now() + 24 * 3600 * 1000,
-    scheme: token?.scheme ?? '',
+    scheme: '',
   };
   return token;
 }
@@ -76,19 +80,33 @@ async function oneMapPublicTransport(from, to, departAt) {
   const url =
     `${ONEMAP}/api/public/routingsvc/route?start=${from.lat},${from.lon}&end=${to.lat},${to.lon}` +
     `&routeType=pt&date=${date}&time=${encodeURIComponent(time)}&mode=TRANSIT&maxWalkDistance=1000&numItineraries=3`;
-  const tok = await oneMapToken();
-  // The docs and community clients disagree on whether a "Bearer " prefix is needed, so try both.
-  for (const scheme of tok.scheme ? [tok.scheme] : ['', 'Bearer ']) {
-    const res = await fetch(url, { headers: { Authorization: scheme + tok.value, 'User-Agent': UA } });
-    if (res.status === 401 || res.status === 403) continue;
-    if (!res.ok) throw new Error(`OneMap routing returned ${res.status}`);
-    if (token) token.scheme = scheme;
-    return parseOneMapPlan(await res.json());
+  // A cached token can be revoked before it expires: on rejection, log in again once and retry.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const tok = await oneMapToken();
+    // The docs and community clients disagree on whether a "Bearer " prefix is needed, so try both
+    // the first time and remember whichever works.
+    for (const scheme of tok.schemeKnown ? [tok.scheme] : ['', 'Bearer ']) {
+      const res = await fetch(url, { headers: { Authorization: scheme + tok.value, 'User-Agent': UA } });
+      if (res.status === 401 || res.status === 403) continue;
+      if (!res.ok) throw new Error(`OneMap routing returned ${res.status}`);
+      tok.scheme = scheme;
+      tok.schemeKnown = true;
+      return parseOneMapPlan(await res.json());
+    }
+    if (process.env.ONEMAP_TOKEN) break; // a fixed token can't be refreshed
+    token = null;
   }
   throw new Error('OneMap rejected the token (401). Check your OneMap account.');
 }
 
 const MODE_NAMES = { WALK: 'Walk', BUS: 'Bus', SUBWAY: 'MRT', RAIL: 'MRT', TRAM: 'LRT' };
+
+/** Leg path; if OneMap leaves out the geometry, fall back to the leg's start and end points. */
+function legPoints(leg) {
+  if (leg.legGeometry?.points) return decodePolyline(leg.legGeometry.points);
+  const ends = [leg.from, leg.to].filter((p) => Number.isFinite(Number(p?.lat)) && Number.isFinite(Number(p?.lon)));
+  return ends.map((p) => [Number(p.lat), Number(p.lon)]);
+}
 
 export function parseOneMapPlan(body) {
   const itineraries = body?.plan?.itineraries ?? [];
@@ -105,7 +123,7 @@ export function parseOneMapPlan(body) {
         endTime: Number(leg.endTime),
         durationMin: Number(leg.duration) / 60,
         distanceM: Number(leg.distance) || 0,
-        points: leg.legGeometry?.points ? decodePolyline(leg.legGeometry.points) : [],
+        points: legPoints(leg),
       };
     });
     const rides = legs.filter((l) => l.mode !== 'WALK').map((l) => l.label);
@@ -151,18 +169,25 @@ async function osrmWalk(from, to, departAt) {
   const res = await fetch(url, { headers: { 'User-Agent': UA } });
   if (!res.ok) throw new Error(`OSRM demo server returned ${res.status}`);
   const r = (await res.json()).routes?.[0];
-  if (!r) throw new Error('No walking route found');
+  if (!r) throw userError('No walking route found for this trip.');
   return walkItinerary(decodePolyline(r.geometry), r.duration, r.distance, from, to, departAt);
 }
 
 /** Returns { provider, itineraries, note } */
 export async function getItineraries(from, to, departAt) {
   const provider = routingProvider();
+  let note = 'Walking-only route: add a free OneMap account to compare bus and MRT options.';
   if (provider === 'onemap') {
-    const itineraries = await oneMapPublicTransport(from, to, departAt);
-    if (itineraries.length) return { provider, itineraries, note: null };
+    try {
+      const itineraries = await oneMapPublicTransport(from, to, departAt);
+      if (itineraries.length) return { provider, itineraries, note: null };
+      note = 'OneMap found no bus or MRT option for this trip, so this is a walking-only route.';
+    } catch (err) {
+      // Don't let a OneMap outage or login problem take the whole app down: fall back to walking.
+      console.error('OneMap routing failed, falling back to walking:', err.message);
+      note = 'Bus and MRT options are unavailable right now, so this is a walking-only route.';
+    }
   }
-  const note = 'Walking-only route: add a free OneMap account to compare bus and MRT options.';
   if (provider === 'ors' || (provider === 'onemap' && process.env.ORS_API_KEY)) {
     return { provider: 'ors', itineraries: await orsWalk(from, to, departAt), note };
   }

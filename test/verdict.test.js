@@ -175,6 +175,44 @@ test('walk legs under a minute are ignored', () => {
   assert.equal(v.level, 'fine');
 });
 
+test('never suggests a route with worse rain than the fastest one', () => {
+  // Fastest: 10 min walking around Bishan (light showers). Other: only 3 min walking, but in Ang Mo Kio (thundery).
+  const walk = (startMin, endMin, points) => ({ mode: 'WALK', startTime: T0 + startMin * MIN, endTime: T0 + endMin * MIN, duration: (endMin - startMin) * 60, distance: 500, legGeometry: { points: encode(points) } });
+  const bus = (startMin, endMin) => ({ mode: 'BUS', route: '52', startTime: T0 + startMin * MIN, endTime: T0 + endMin * MIN, duration: (endMin - startMin) * 60, distance: 3000, legGeometry: { points: encode([BISHAN, [1.375, 103.839]]) } });
+  const plan = { plan: { itineraries: [
+    { duration: 15 * 60, startTime: T0, endTime: T0 + 15 * MIN, legs: [walk(0, 10, [BISHAN, [1.351, 103.84]]), bus(10, 15)] },
+    { duration: 20 * 60, startTime: T0, endTime: T0 + 20 * MIN, legs: [bus(0, 17), walk(17, 20, [[1.375, 103.839], [1.376, 103.84]])] },
+  ] } };
+  const w = weather({ bishan: 'Light Showers' });
+  w.twoHour.areas.find((a) => a.name === 'Ang Mo Kio').forecast = 'Thundery Showers';
+  const v = buildVerdict({ itineraries: parseOneMapPlan(plan), weather: w, from, to, departAt: T0, now: T0 });
+  assert.equal(v.level, 'light');
+  assert.equal(v.itineraries[1].level, 'heavy');
+  assert.ok(!v.alternatives.some((a) => a.type === 'route'), 'must not suggest the thundery route');
+});
+
+test('"go later" only appears when the regional outlook actually improves', () => {
+  // 2-hour forecast is thundery (heavy); 24-hour central region is Showers now and Showers next: no improvement.
+  const w = weather();
+  w.twentyFour.periods[0].regions.central = 'Showers';
+  w.twentyFour.periods[1].regions.central = 'Showers';
+  const v = buildVerdict({ itineraries: parseOneMapPlan(oneMapPlan()), weather: w, from, to, departAt: T0, now: T0 });
+  assert.equal(v.level, 'heavy');
+  assert.ok(!v.alternatives.some((a) => a.type === 'timing'));
+});
+
+test('legs without geometry fall back to their start and end points', () => {
+  const plan = oneMapPlan();
+  const walk = plan.plan.itineraries[0].legs[0];
+  delete walk.legGeometry;
+  walk.from = { name: 'Bishan MRT', lat: BISHAN[0], lon: BISHAN[1] };
+  walk.to = { name: 'Braddell', lat: 1.34, lon: 103.853 };
+  const its = parseOneMapPlan(plan);
+  assert.equal(its[0].legs[0].points.length, 2);
+  const v = buildVerdict({ itineraries: its, weather: weather(), from, to, departAt: T0, now: T0 });
+  assert.equal(v.level, 'heavy');
+});
+
 test('OneMap date/time are Singapore local', () => {
   assert.deepEqual(sgtDateTime(Date.parse('2026-11-10T23:30:00Z')), { date: '11-11-2026', time: '07:30:00' });
 });

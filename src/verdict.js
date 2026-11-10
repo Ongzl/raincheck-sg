@@ -2,6 +2,7 @@
 // No network calls here, so it's easy to test.
 
 import { nearest, samplePath } from './geo.js';
+import { userError } from './errors.js';
 
 export const LEVELS = ['fine', 'light', 'heavy'];
 
@@ -126,14 +127,15 @@ export function mapsLink(from, to, mode = 'transit') {
 /** The main entry point. Returns everything the UI shows. */
 export function buildVerdict({ itineraries, weather, from, to, departAt, now = Date.now(), note = null }) {
   const assessed = itineraries.map((it) => assessItinerary(it, weather));
-  if (!assessed.length) throw new Error('No route found for this trip.');
+  if (!assessed.length) throw userError('No route found for this trip.');
   // Primary = the fastest, because that's what Google Maps would send you on anyway.
   const primary = assessed.reduce((a, b) => (b.durationMin < a.durationMin ? b : a));
   const level = primary.severity == null ? 'unknown' : LEVELS[primary.severity];
 
   const alternatives = [];
   if (primary.severity >= 1) {
-    const others = assessed.filter((it) => it !== primary && it.severity != null);
+    // Never suggest a route with worse rain than the one you'd take anyway.
+    const others = assessed.filter((it) => it !== primary && it.severity != null && it.severity <= primary.severity);
     const best = others.sort((a, b) => a.severity - b.severity || a.wetMin - b.wetMin || a.walkMin - b.walkMin)[0];
     if (best && (best.severity < primary.severity || primary.wetMin - best.wetMin >= 2)) {
       const extra = Math.round(best.durationMin - primary.durationMin);
@@ -154,8 +156,10 @@ export function buildVerdict({ itineraries, weather, from, to, departAt, now = D
     const current = periodAt(weather.twentyFour, departAt);
     const next = current ? periods[periods.indexOf(current) + 1] : null;
     if (next) {
+      // Compare like with like: the next regional block against the current regional block.
+      const nowSev = severityOf(current.regions[region]);
       const nextSev = severityOf(next.regions[region]);
-      if (nextSev != null && nextSev < primary.severity) {
+      if (nextSev != null && nowSev != null && nextSev < nowSev && nextSev < primary.severity) {
         alternatives.push({
           type: 'timing',
           title: `Or go later: the outlook improves for ${next.text}`,

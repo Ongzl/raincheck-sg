@@ -36,6 +36,7 @@ function setupPlace(role) {
   const input = $('input', wrap);
   const list = $('.suggestions', wrap);
   let timer;
+  let latest = 0; // only the newest search may update the list
   let results = [];
   let active = -1;
 
@@ -52,10 +53,13 @@ function setupPlace(role) {
     state[role] = null;
     clearTimeout(timer);
     const q = input.value.trim();
+    const seq = ++latest;
     if (q.length < 2) { results = []; return render(); }
     timer = setTimeout(async () => {
       try {
-        results = await (await fetch(`/api/search?q=${encodeURIComponent(q)}`)).json();
+        const found = await (await fetch(`/api/search?q=${encodeURIComponent(q)}`)).json();
+        if (seq !== latest) return; // a newer query is in flight or done
+        results = found;
         active = -1;
         render();
       } catch { /* ignore network blips while typing */ }

@@ -11,6 +11,7 @@ if (existsSync('.env')) process.loadEnvFile('.env');
 
 const { runCheck } = await import('./src/check.js');
 const { searchPlaces, routingProvider } = await import('./src/routing.js');
+const { userError } = await import('./src/errors.js');
 
 const PUBLIC = join(fileURLToPath(new URL('.', import.meta.url)), 'public');
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.json': 'application/json', '.webmanifest': 'application/manifest+json' };
@@ -24,9 +25,13 @@ async function readBody(req) {
   let s = '';
   for await (const chunk of req) {
     s += chunk;
-    if (s.length > 10_000) throw new Error('Request too large');
+    if (s.length > 10_000) throw userError('Request too large.', 413);
   }
-  return JSON.parse(s || '{}');
+  try {
+    return JSON.parse(s || '{}');
+  } catch {
+    throw userError('Request body must be JSON.', 400);
+  }
 }
 
 function validPlace(p) {
@@ -47,7 +52,8 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/api/check' && req.method === 'POST') {
       const { from, to, departAt } = await readBody(req);
       if (!validPlace(from) || !validPlace(to)) return send(res, 400, { error: 'Pick a start and destination in Singapore.' });
-      const when = Number(departAt) || Date.now();
+      const when = departAt == null ? Date.now() : Number(departAt);
+      if (!Number.isFinite(when) || when < Date.now() - 30 * 60 * 1000) return send(res, 400, { error: 'Pick a departure time from now onwards.' });
       if (when > Date.now() + 36 * 3600 * 1000) return send(res, 400, { error: 'Forecasts only reach about 24 hours ahead.' });
       const { _itineraries, ...result } = await runCheck({ from, to, departAt: when });
       return send(res, 200, result);
@@ -58,8 +64,10 @@ const server = createServer(async (req, res) => {
     if (!file.startsWith(PUBLIC) || !existsSync(file)) return send(res, 404, 'Not found', 'text/plain');
     return send(res, 200, await readFile(file), TYPES[extname(file)] ?? 'application/octet-stream');
   } catch (err) {
+    if (err.expose) return send(res, err.status, { error: err.message });
     console.error(err);
-    return send(res, 502, { error: err.message });
+    // Don't leak internal details (e.g. credential problems) to visitors.
+    return send(res, 502, { error: 'Couldn’t reach the weather or routing service. Try again in a minute.' });
   }
 });
 
